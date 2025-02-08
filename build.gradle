@@ -7,10 +7,10 @@ ext {
 buildscript {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.2'
+        classpath 'com.android.tools.build:gradle:8.8.0'
         classpath 'com.google.protobuf:protobuf-gradle-plugin:0.9.4'
 
         // NOTE: Do not place your application dependencies here; they belong
@@ -21,6 +21,9 @@ buildscript {
 allprojects {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
+        maven {
+            url "https://api.xposed.info"
+        }
     }
 }

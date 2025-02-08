@@ -4,35 +4,33 @@
 #include <fstream>
 #include <regex>
 
+#include <link.h>
+
 bool MapInfo::create() {
-    std::ifstream maps("/proc/self/maps");
-    LOG_ASSERT_S(maps.is_open(), return false, "Error loading proc maps");
+    int rv = dl_iterate_phdr([] (struct dl_phdr_info *info, size_t, void *user_data) {
+        auto *instance = (MapInfo *)user_data;
 
-    // line has format "<rangeStart>-<rangeEnd> <perms> <ignored1> <ignored2> ...    <label>"
-    std::regex re(R"(^([^\s-]+)-([^\s]+)\s([\w-]+)\s.*?(?:\s\s([^\s].+))?$)");
-    for (std::string line; std::getline(maps, line); ) {
-        // match regex, ignore non-matching lines
-        std::smatch matches;
-        if (!std::regex_match(line, matches, re))
-            continue;
+        // map library name to new library entry with base address
+        auto &entry = *instance->mLibraryData.try_emplace(info->dlpi_name, info->dlpi_name).first;
+        for (size_t i = 0; i < info->dlpi_phnum; i++) {
+            // set base address to relocation + PT_LOAD vaddr if not already set
+            // PT_LOAD headers are sorted in ascending vaddr order so using the first is correct
+            if (info->dlpi_phdr[i].p_type == PT_LOAD && entry.second.base == 0)
+                entry.second.base = info->dlpi_addr + info->dlpi_phdr[i].p_vaddr;
 
-        RangeData result;
-        // parse start and end from hex
-        result.start = std::stoull(matches.str(1), nullptr, 16);
-        result.end = std::stoull(matches.str(2), nullptr, 16);
-        // copy label
-        result.label = matches.str(4);
+            entry.second.ranges.emplace_back(
+                    // range start address
+                    info->dlpi_addr + info->dlpi_phdr[i].p_vaddr,
+                    // range end address
+                    info->dlpi_addr + info->dlpi_phdr[i].p_vaddr + info->dlpi_phdr[i].p_memsz,
+                    // range permissions
+                    static_cast<uint8_t>(info->dlpi_phdr[i].p_flags)
+            );
+        }
 
-        // perms has format "rwxp" or "----"
-        auto perm = matches.str(3);
-        LOG_ASSERT_S(perm.size() == 4, return false, "Error reading map perms");
-        int read = perm[0] == 'r' ? 4 : 0;
-        int write = perm[1] == 'w' ? 2 : 0;
-        int execute = perm[2] == 'x' ? 1 : 0;
-        result.perms = read + write + execute;
-
-        mRanges.push_back(result);
-    }
+        return 0;
+    }, this);
+    LOG_ASSERT_S(rv == 0, return false, "Error iterating dl program header");
 
     return true;
 }
@@ -40,39 +38,25 @@ bool MapInfo::create() {
 std::set<std::string> MapInfo::loadedLibraries() const {
     std::set<std::string> result;
 
-    for (auto &range : mRanges) {
-        if (StringUtil::strEndsWith(range.label, ".so")) {
-            result.emplace(range.label);
-        }
-    }
+    for (auto &it : mLibraryData)
+        result.emplace(it.first);
 
     return result;
 }
 
 void *MapInfo::getBaseAddress(const std::string &library) const {
-    for (auto &range : mRanges) {
-        // skip range that does not match the library
-        if (!StringUtil::strEndsWith(range.label, library))
-            continue;
-
-        // skip range without read permission or without enough space for ELF header
-        if ((range.perms & 4) != 4 || range.end - range.start <= 4)
-            continue;
-
-        // check ELF magic bytes to confirm this region as the base
-        if (memcmp((void *)range.start, "\x7f" "ELF", 4) != 0)
-            continue;
-
-        return (void *)range.start;
-    }
+    auto it = mLibraryData.find(library);
+    if (it != mLibraryData.end())
+        return reinterpret_cast<void*>(it->second.base);
 
     return nullptr;
 }
 
-const MapInfo::RangeData *MapInfo::rangeFromAddress(uintptr_t addr, uint64_t size) const {
-    for (auto &range : mRanges)
-        if (addr >= range.start && (addr + size) <= range.end)
-            return &range;
+MapInfo::LookupResult MapInfo::lookupRange(uintptr_t address, uint64_t size) const {
+    for (auto &it : mLibraryData)
+        for (auto &range : it.second.ranges)
+            if (address >= range.start && (address + size) <= range.end)
+                return {&it.second, &range};
 
-    return nullptr;
+    return {};
 }

@@ -18,16 +18,13 @@ import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
 
-import com.jaredrummler.android.device.DeviceName;
-
-
-import de.tu_darmstadt.seemoo.nfcgate.BuildConfig;
 import de.tu_darmstadt.seemoo.nfcgate.R;
 import de.tu_darmstadt.seemoo.nfcgate.gui.component.CustomArrayAdapter;
-import de.tu_darmstadt.seemoo.nfcgate.gui.component.FileShare;
+import de.tu_darmstadt.seemoo.nfcgate.gui.component.ContentShare;
 import de.tu_darmstadt.seemoo.nfcgate.gui.component.StatusItem;
 import de.tu_darmstadt.seemoo.nfcgate.nfc.NfcManager;
 import de.tu_darmstadt.seemoo.nfcgate.nfc.chip.NfcChip;
+import de.tu_darmstadt.seemoo.nfcgate.util.DeviceNames;
 
 public class StatusFragment extends BaseFragment {
     // ui references
@@ -45,7 +42,7 @@ public class StatusFragment extends BaseFragment {
         // custom toolbar actions
         setHasOptionsMenu(true);
         // set version as subtitle
-        getMainActivity().getSupportActionBar().setSubtitle(getString(R.string.about_version, BuildConfig.VERSION_NAME));
+        getMainActivity().getSupportActionBar().setSubtitle(getString(R.string.about_version, AboutFragment.getVersionNameGit()));
 
         // handlers
         mStatus.setOnItemClickListener(new AdapterView.OnItemClickListener() {
@@ -99,23 +96,43 @@ public class StatusFragment extends BaseFragment {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == R.id.action_export) {
-            exportData();
+        if (item.getItemId() == R.id.action_copy) {
+            shareConfigAsText();
+            return true;
+        }
+        else if (item.getItemId() == R.id.action_export) {
+            shareConfigAsFile();
             return true;
         }
         return super.onOptionsItemSelected(item);
     }
 
-    void exportData() {
-        final StringBuilder str = new StringBuilder();
-        for (int i = 0; i < mStatusAdapter.getCount();  i++)
-            str.append(str.length() == 0 ? "" : "\n").append(mStatusAdapter.getItem(i).toString());
+    String buildConfigContent() {
+        // add app version
+        final StringBuilder str = new StringBuilder("Version: ")
+                .append(AboutFragment.getVersionNameGit());
 
-        new FileShare(getActivity())
+        // add full device info
+        for (int i = 0; i < mStatusAdapter.getCount();  i++)
+            str.append("\n").append(mStatusAdapter.getItem(i));
+
+        return str.toString();
+    }
+
+    void shareConfigAsText() {
+        new ContentShare(getActivity())
+                .setMimeType("text/plain")
+                .setText(buildConfigContent())
+                .share();
+    }
+
+    void shareConfigAsFile() {
+        new ContentShare(getActivity())
                 .setPrefix("config")
                 .setExtension(".txt")
                 .setMimeType("text/plain")
-                .share(stream -> stream.write(str.toString().getBytes()));
+                .setFile(stream -> stream.write(buildConfigContent().getBytes()))
+                .share();
     }
 
     void detect() {
@@ -133,12 +150,13 @@ public class StatusFragment extends BaseFragment {
 
     StatusItem detectDeviceName() {
         // transform code name into market name
-        String deviceName = DeviceName.getDeviceName();
+        String deviceString = new DeviceNames(getContext()).formatCurrentDeviceName();
+
         // device name should be OK for all supported devices
-        StatusItem result = new StatusItem(getContext(), getString(R.string.status_devname)).setValue(deviceName);
+        StatusItem result = new StatusItem(getContext(), getString(R.string.status_devname)).setValue(deviceString);
 
         // No hist byte on this specific combination
-        if (deviceName.equals("Nexus 5X") && Build.VERSION.RELEASE.equals("6.0.1"))
+        if ("Nexus 5X".equals(Build.MODEL) && Build.VERSION.RELEASE.equals("6.0.1"))
             result.setWarn(getString(R.string.warn_5X601));
 
         return result;
@@ -148,8 +166,8 @@ public class StatusFragment extends BaseFragment {
         // android version should be OK for all supported versions
         StatusItem result = new StatusItem(getContext(), getString(R.string.status_version)).setValue(Build.VERSION.RELEASE);
 
-        // Android 15 and above is untested
-        if (Build.VERSION.SDK_INT > 34)
+        // Android 16 and above is untested
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM)
             result.setWarn(getString(R.string.warn_AV));
 
         return result;
